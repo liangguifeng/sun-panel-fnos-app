@@ -23,6 +23,8 @@
 
 脚本按系统架构下载官方 `fnpack 1.2.3` 到 `.fnpack/`，再构建 `.fpk`。通过 fnOS 应用中心手动安装生成的包。安装向导要求填写 HTTP 端口，默认 13002；首次启动后可从飞牛桌面或 `http://<NAS 地址>:<所填端口>/` 访问。
 
+推送到 `master` 后，[GitHub Actions 发布流程](.github/workflows/release.yml)会重新打包。tag 与 Release 名称直接取 `manifest` 的 `version`：新版本创建新 Release；版本未变时，保留原 tag，仅替换同名 `.fpk` 资产。Release 资产因此可能比该 tag 指向的源码更新；需要让源码归档与二进制严格对应时，应递增 `manifest.version`。仓库若开启不可变 Release，已有版本的资产无法覆盖，工作流会报错。
+
 首次安装时使用当前服务端的 `-config-reset` 生成配置（仅在 `conf.ini` 不存在时），再写入向导端口；若原配置端口为 3002，会先备份为 `conf.ini.port-3002.bak`。在应用设置中更改端口后，配置回调会更新 `conf.ini`，并在服务原先运行时重启服务；旧配置留在 `conf.ini.before-config.bak`。项目中不预置一份可能与 v2 二进制不匹配的 v1 `conf.ini`。此应用未接入 fnOS 统一网关，因此访问控制由 Sun-Panel 自身及 NAS 网络策略承担。发布前须在 x86_64 与 aarch64 真机上分别验证安装、登录、数据持久化、停止及升级。
 
 ## 维护

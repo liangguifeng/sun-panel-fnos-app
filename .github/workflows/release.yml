@@ -1,0 +1,129 @@
+name: Build and release fnOS package
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# 同一版本的资产会被替换，发布步骤必须串行。
+concurrency:
+  group: fnos-release-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Read package identity from manifest
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          read_field() {
+            awk -F '=' -v key="$1" '
+              $1 ~ "^[[:space:]]*" key "[[:space:]]*$" {
+                value = $2
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+                print value
+                exit
+              }
+            ' manifest
+          }
+
+          appname="$(read_field appname)"
+          version="$(read_field version)"
+
+          [[ "${appname}" =~ ^[a-zA-Z0-9_-]+$ ]] || {
+            echo 'Invalid appname in manifest' >&2
+            exit 1
+          }
+          [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][a-zA-Z0-9.-]+)?$ ]] || {
+            echo 'Invalid version in manifest' >&2
+            exit 1
+          }
+
+          # tag 精确使用 manifest.version，不额外添加 v 前缀。
+          {
+            echo "appname=${appname}"
+            echo "version=${version}"
+            echo "asset=${appname}.fpk"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Build fnOS package
+        shell: bash
+        env:
+          APPNAME: ${{ steps.package.outputs.appname }}
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          ./build.sh
+          test -s "${APPNAME}.fpk"
+
+          # 确认发布的包与当前 manifest 版本一致。
+          packaged_version="$(tar -xOzf "${APPNAME}.fpk" manifest |
+            awk -F '=' '$1 ~ /^[[:space:]]*version[[:space:]]*$/ {
+              gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2)
+              print $2
+              exit
+            }')"
+          test "${packaged_version}" = "${VERSION}"
+
+      - name: Create or update GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          APPNAME: ${{ steps.package.outputs.appname }}
+          VERSION: ${{ steps.package.outputs.version }}
+          ASSET: ${{ steps.package.outputs.asset }}
+        run: |
+          set -euo pipefail
+
+          if ! gh release view "${VERSION}" >/dev/null 2>&1; then
+            release_flags=()
+            if [[ "${VERSION}" == *-* ]]; then
+              release_flags+=(--prerelease)
+            fi
+
+            # 新版本：创建同名 tag 与 Release，直接附上构建产物。
+            gh release create "${VERSION}" "${ASSET}" \
+              --target "${GITHUB_SHA}" \
+              --title "${VERSION}" \
+              --notes "Built from master commit ${GITHUB_SHA}." \
+              "${release_flags[@]}"
+            exit 0
+          fi
+
+          # 先上传新资产；上传或校验失败时，旧资产保持可下载。
+          staged="${APPNAME}.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.pending.fpk"
+          cp "${ASSET}" "${staged}"
+          gh release upload "${VERSION}" "${staged}"
+
+          release_id="$(gh api "repos/${GH_REPO}/releases/tags/${VERSION}" --jq '.id')"
+          assets="$(gh api "repos/${GH_REPO}/releases/${release_id}/assets?per_page=100")"
+          staged_id="$(jq -r --arg name "${staged}" '.[] | select(.name == $name) | .id' <<< "${assets}")"
+          uploaded_size="$(jq -r --arg name "${staged}" '.[] | select(.name == $name) | .size' <<< "${assets}")"
+          old_id="$(jq -r --arg name "${ASSET}" '.[] | select(.name == $name) | .id' <<< "${assets}")"
+
+          test -n "${staged_id}"
+          test "${uploaded_size}" = "$(stat -c %s "${ASSET}")"
+
+          # GitHub 不支持同名资产原地更新；删除旧资产后将已上传的新资产改名。
+          if [ -n "${old_id}" ]; then
+            gh api -X DELETE "repos/${GH_REPO}/releases/assets/${old_id}" >/dev/null
+          fi
+          gh api -X PATCH "repos/${GH_REPO}/releases/assets/${staged_id}" \
+            -f name="${ASSET}" >/dev/null
+
+          echo "Updated ${VERSION} with ${ASSET} from ${GITHUB_SHA}"
