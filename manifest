@@ -1,0 +1,12 @@
+appname               = sun-panel-fnos-app
+version               = 2.0.2-beta
+display_name          = Sun-Panel
+desc                  = 一个NAS、服务器导航面板、简易docker管理器、Homepage、浏览器首页
+platform              = all
+source                = thirdparty
+maintainer            = 红烧猎人
+maintainer_url        = https://github.com/hslr-s/sun-panel
+distributor           = liangguifeng
+distributor_url       = https://github.com/liangguifeng/sun-panel-fnos-app
+desktop_uidir         = ui
+desktop_applaunchname = sun-panel-fnos-app.Application

@@ -1,0 +1,1 @@
+const t={onEdit:null,onDelete:null};function o(n={}){const{onEdit:e,onDelete:i}=n;e&&(t.onEdit=e),i&&(t.onDelete=i)}function l(n,e){t.onEdit&&t.onEdit(n,e)}function d(n,e){t.onDelete&&t.onDelete(n,e)}export{d as a,l as e,o as r};

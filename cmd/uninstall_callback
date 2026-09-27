@@ -1,0 +1,39 @@
+#!/bin/bash
+# 仅在用户明确选择删除时清理应用私有数据。
+
+case "${wizard_data_action:-keep}" in
+    keep)
+        exit 0
+        ;;
+    delete)
+        ;;
+    *)
+        printf '%s\n' '无效的数据处理方式，未删除任何数据' > "${TRIM_TEMP_LOGFILE:-/dev/stderr}"
+        exit 1
+        ;;
+esac
+
+APP_NAME="sun-panel-fnos-app"
+paths=()
+
+# 所有路径必须先全部通过验证，之后才允许执行删除。
+for entry in \
+    "@appconf:${TRIM_PKGETC:-}" \
+    "@apphome:${TRIM_PKGHOME:-}" \
+    "@appdata:${TRIM_PKGVAR:-}"; do
+    type="${entry%%:*}"
+    path="${entry#*:}"
+    resolved="$(readlink -f -- "${path}")" || exit 1
+
+    case "${resolved}" in
+        */"${type}"/"${APP_NAME}")
+            paths+=("${resolved}")
+            ;;
+        *)
+            printf '%s\n' "拒绝删除非应用专属路径: ${path}" > "${TRIM_TEMP_LOGFILE:-/dev/stderr}"
+            exit 1
+            ;;
+    esac
+done
+
+rm -rf -- "${paths[@]}"

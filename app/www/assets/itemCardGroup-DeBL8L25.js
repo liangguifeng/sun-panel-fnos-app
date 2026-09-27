@@ -1,0 +1,1 @@
+import{p as e}from"./index-Bfu5ZQ-L.js";function a(t){return e({url:"/panel/itemCardGroup/edit",data:t})}function n(){return e({url:"/panel/itemCardGroup/getList"})}function u(t){return e({url:"/panel/itemCardGroup/deletes",data:{ids:t}})}function o(t){return e({url:"/panel/itemCardGroup/saveSort",data:{sortItems:t}})}export{u as d,a as e,n as g,o as s};

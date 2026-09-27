@@ -1,0 +1,1 @@
+import{p as n}from"./index-Bfu5ZQ-L.js";function t(){return n({url:"/about"})}function u(r){return n({url:"/about/version/checkNewVersion",data:{isCheckBeta:r}})}function e(){return n({url:"/about/version/runningInfo"})}export{u as c,t as g,e as r};

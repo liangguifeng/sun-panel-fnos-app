@@ -1,0 +1,14 @@
+{
+  "data-share": {
+    "shares": [
+      {
+        "name": "sun-panel",
+        "permission": {
+          "rw": [
+            "sun-panel"
+          ]
+        }
+      }
+    ]
+  }
+}

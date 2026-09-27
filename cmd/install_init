@@ -1,0 +1,10 @@
+#!/bin/bash
+# 安装文件前检查向导输入；启动阶段还会再次校验。
+
+port="${wizard_port:-13002}"
+if [[ ! "${port}" =~ ^[1-9][0-9]{0,4}$ ]] || (( port > 65535 )); then
+    printf '%s\n' 'HTTP 监听端口必须为 1–65535 范围内的整数' > "${TRIM_TEMP_LOGFILE:-/dev/stderr}"
+    exit 1
+fi
+
+exit 0

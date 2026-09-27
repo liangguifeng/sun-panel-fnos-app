@@ -1,0 +1,8 @@
+{
+    "defaults":
+    {
+        "run-as": "package"
+    },
+    "username": "sun-panel",
+    "groupname": "sun-panel"
+}

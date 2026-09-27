@@ -1,0 +1,10 @@
+#!/bin/bash
+# 卸载前确认数据选项；未指定时保守地保留数据。
+
+case "${wizard_data_action:-keep}" in
+    keep | delete) exit 0 ;;
+    *)
+        printf '%s\n' '无效的数据处理方式' > "${TRIM_TEMP_LOGFILE:-/dev/stderr}"
+        exit 1
+        ;;
+esac

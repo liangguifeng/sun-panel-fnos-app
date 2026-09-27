@@ -1,0 +1,4 @@
+#!/bin/bash
+# 配置提交前不改写文件；实际变更由 config_callback 处理。
+
+exit 0

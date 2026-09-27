@@ -1,0 +1,25 @@
+#!/bin/bash
+# 配置提交后更新监听端口；仅重启此前正在运行的服务。
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MAIN="${SCRIPT_DIR}/main"
+CONF_FILE="${TRIM_PKGETC}/conf.ini"
+was_running=false
+
+if "${MAIN}" status; then
+    was_running=true
+fi
+
+# 保留变更前的配置，便于重启失败后人工恢复。
+if [ -f "${CONF_FILE}" ]; then
+    cp -p "${CONF_FILE}" "${CONF_FILE}.before-config.bak" || exit 1
+fi
+
+"${MAIN}" configure || exit 1
+
+if [ "${was_running}" = true ]; then
+    "${MAIN}" stop || exit 1
+    "${MAIN}" start || exit 1
+fi
+
+exit 0

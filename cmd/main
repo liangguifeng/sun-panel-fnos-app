@@ -1,0 +1,230 @@
+#!/bin/bash
+# fnOS 服务控制入口：start、stop、status。
+
+LOG_FILE="${TRIM_PKGVAR}/info.log"
+PID_FILE="${TRIM_PKGVAR}/app.pid"
+WORK_DIR="${TRIM_PKGHOME}"
+
+# 将错误写入 fnOS 的用户可见日志。
+fail() {
+    printf '%s\n' "$1" > "${TRIM_TEMP_LOGFILE:-/dev/stderr}"
+    exit 1
+}
+
+case "${TRIM_SYS_ARCH:-}" in
+    x86)
+        BINARY="${TRIM_APPDEST}/server/sun-panel-amd64"
+        ;;
+    arm)
+        BINARY="${TRIM_APPDEST}/server/sun-panel-arm64"
+        ;;
+    *)
+        fail "不支持的设备架构: ${TRIM_SYS_ARCH:-unknown}"
+        ;;
+esac
+
+# 向导值仍需在脚本中校验，不能只依赖表单规则。
+service_port() {
+    local port="${wizard_port:-13002}"
+
+    [[ "${port}" =~ ^[1-9][0-9]{0,4}$ ]] || return 1
+    (( port <= 65535 )) || return 1
+
+    printf '%s' "${port}"
+}
+
+# 用当前版本的服务端生成配置，然后只修改 [base] 中的监听端口。
+configure_port() {
+    local binary="$1"
+    local config_file="$2"
+    local log_file="$3"
+    local desired_port="$4"
+    local current_port temp_file
+
+    # 用当前服务端生成版本匹配的配置；绝不重置已有配置。
+    if [ ! -e "${config_file}" ]; then
+        "${binary}" -config-reset >> "${log_file}" 2>&1 || return 1
+    fi
+    [ -r "${config_file}" ] || return 1
+
+    current_port="$(awk '
+        /^\[[^]]+\][[:space:]]*$/ {
+            section = $0
+            gsub(/[[:space:]]/, "", section)
+        }
+        section == "[base]" && /^[[:space:]]*http_port[[:space:]]*=/ {
+            sub(/^[^=]*=/, "")
+            gsub(/[[:space:]]/, "")
+            print
+            found++
+        }
+        END { if (found != 1) exit 1 }
+    ' "${config_file}")" || return 1
+
+    if [ "${current_port}" = "${desired_port}" ]; then
+        return 0
+    fi
+
+    # 先写临时文件，再原子替换，避免改写中断造成配置损坏。
+    temp_file="$(mktemp "${config_file}.XXXXXX")" || return 1
+    if ! cp -p "${config_file}" "${temp_file}"; then
+        rm -f "${temp_file}"
+        return 1
+    fi
+
+    if ! awk -v port="${desired_port}" '
+        /^\[[^]]+\][[:space:]]*$/ {
+            section = $0
+            gsub(/[[:space:]]/, "", section)
+        }
+        section == "[base]" && /^[[:space:]]*http_port[[:space:]]*=/ {
+            print "http_port=" port
+            found++
+            next
+        }
+        { print }
+        END { if (found != 1) exit 1 }
+    ' "${config_file}" > "${temp_file}"; then
+        rm -f "${temp_file}"
+        return 1
+    fi
+
+    # 默认端口迁移留一份固定备份；其他改动由 fnOS 配置回调负责。
+    if [ "${current_port}" = 3002 ] && [ ! -e "${config_file}.port-3002.bak" ]; then
+        cp -p "${config_file}" "${config_file}.port-3002.bak" || return 1
+    fi
+
+    if ! mv -f "${temp_file}" "${config_file}"; then
+        rm -f "${temp_file}"
+        return 1
+    fi
+}
+
+prepare_configuration() {
+    local port
+
+    port="$(service_port)" || fail "HTTP 监听端口必须为 1–65535 范围内的整数"
+    [ -x "${BINARY}" ] || fail "Sun-Panel 服务端不可执行: ${BINARY}"
+    [ -r "${TRIM_APPDEST}/www/index.html" ] || fail "Sun-Panel 网页资源缺失"
+
+    prepare_workdir
+    cd "${WORK_DIR}" || fail "无法进入 Sun-Panel 工作目录"
+
+    configure_port "${BINARY}" "${TRIM_PKGETC}/conf.ini" "${LOG_FILE}" "${port}" || \
+        fail "无法设置 Sun-Panel 监听端口 ${port}；请检查 ${TRIM_PKGETC}/conf.ini"
+}
+
+# 除 PID 外还核对命令行，避免误认复用同一 PID 的其他进程。
+running_pid() {
+    local pid
+
+    [ -r "${PID_FILE}" ] || return 1
+    read -r pid < "${PID_FILE}"
+    [[ "${pid}" =~ ^[0-9]+$ ]] || return 1
+    [ -r "/proc/${pid}/cmdline" ] || return 1
+
+    tr '\0' '\n' < "/proc/${pid}/cmdline" | grep -Fxq "${BINARY}" || return 1
+    kill -0 "${pid}" 2>/dev/null || return 1
+
+    printf '%s' "${pid}"
+}
+
+# 在持久目录中组织 Sun-Panel 所需的相对路径。
+prepare_workdir() {
+    local name target source
+
+    mkdir -p "${WORK_DIR}" "${TRIM_PKGETC}" "${TRIM_PKGVAR}" \
+        "${WORK_DIR}/database" "${WORK_DIR}/uploads" || fail "无法创建 Sun-Panel 数据目录"
+
+    # 配置和日志仍按 Sun-Panel 的 ./conf、./runtime 约定访问。
+    for name in conf runtime; do
+        case "${name}" in
+            conf)
+                target="${TRIM_PKGETC}"
+                ;;
+            runtime)
+                target="${TRIM_PKGVAR}"
+                ;;
+        esac
+
+        if [ -L "${WORK_DIR}/${name}" ]; then
+            [ "$(readlink "${WORK_DIR}/${name}")" = "${target}" ] || \
+                fail "数据目录 ${name} 指向非预期位置，请手动检查"
+        elif [ -e "${WORK_DIR}/${name}" ]; then
+            fail "数据目录 ${name} 已存在且不是预期链接，请手动检查"
+        else
+            ln -s "${target}" "${WORK_DIR}/${name}" || fail "无法建立 ${name} 目录链接"
+        fi
+    done
+
+    # custom 和 micro-apps 可能产生用户数据，不能放在升级会替换的 target。
+    [ ! -L "${WORK_DIR}/web" ] || fail "web 目录是符号链接，请手动检查后再启动"
+    mkdir -p "${WORK_DIR}/web/custom" "${WORK_DIR}/web/micro-apps" || \
+        fail "无法创建 Web 数据目录"
+
+    for source in "${TRIM_APPDEST}/www/"*; do
+        case "${source##*/}" in
+            custom | micro-apps) continue ;;
+        esac
+
+        cp -R "${source}" "${WORK_DIR}/web/" || fail "无法更新 Web 资源: ${source}"
+    done
+}
+
+# fnOS 以退出码 0 表示运行中，以 3 表示未运行。
+main() {
+    case "${1:-}" in
+        start)
+            if running_pid >/dev/null; then
+                exit 0
+            fi
+
+            prepare_configuration
+
+            "${BINARY}" >> "${LOG_FILE}" 2>&1 &
+            pid=$!
+
+            if ! printf '%s\n' "${pid}" > "${PID_FILE}"; then
+                kill "${pid}" 2>/dev/null
+                fail "无法写入 PID 文件"
+            fi
+
+            sleep 2
+            if ! running_pid >/dev/null; then
+                rm -f "${PID_FILE}"
+                fail "Sun-Panel 启动失败，请查看 ${LOG_FILE}"
+            fi
+            ;;
+        stop)
+            if pid="$(running_pid)"; then
+                kill -TERM "${pid}" || fail "无法停止 Sun-Panel 进程"
+
+                for ((i=0; i<20; i++)); do
+                    if ! running_pid >/dev/null; then
+                        break
+                    fi
+                    sleep 1
+                done
+
+                running_pid >/dev/null && fail "Sun-Panel 未在 20 秒内停止，请查看 ${LOG_FILE}"
+            fi
+
+            rm -f "${PID_FILE}"
+            ;;
+        status)
+            running_pid >/dev/null && exit 0
+            exit 3
+            ;;
+        configure)
+            prepare_configuration
+            ;;
+        *)
+            exit 1
+            ;;
+    esac
+}
+
+# 允许测试脚本加载函数，直接执行时仍由 fnOS 调用 main。
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi
