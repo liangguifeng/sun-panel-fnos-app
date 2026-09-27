@@ -17,10 +17,6 @@
             "message": "请输入 1–65535 范围内的端口"
           }
         ]
-      },
-      {
-        "type": "tips",
-        "helpText": "保存后将更新 conf/conf.ini；若服务正在运行，会自动重启。其他 Sun-Panel 配置请编辑 fnOS 应用配置目录中的 conf.ini。"
       }
     ]
   }
